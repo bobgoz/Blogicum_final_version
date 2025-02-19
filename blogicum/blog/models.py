@@ -1,7 +1,7 @@
 from django.db import models
-from django import forms
 from django.contrib.auth import get_user_model
 from django.utils.timezone import now
+
 
 from core.models import PublishedModel, CreatedAtModel, TitleModel
 
@@ -46,6 +46,7 @@ class Post(PublishedModel, CreatedAtModel, TitleModel):
         on_delete=models.CASCADE,
         blank=False,
         verbose_name='Автор публикации',
+        related_name='author',
     )
     location = models.ForeignKey(
         'Location',
@@ -61,6 +62,7 @@ class Post(PublishedModel, CreatedAtModel, TitleModel):
         blank=False,
         verbose_name='Категория',
     )
+    image = models.ImageField('Фото', upload_to='posts_image', blank=True)
     objects = models.Manager()
     posts_objects = PostManager()
 
@@ -108,12 +110,15 @@ class Location(PublishedModel, CreatedAtModel):
 
     def __str__(self):
         return self.name
-    
+
+
 class Comment(models.Model):
     text = models.TextField('Комментарий', null=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    # post_id = models.OneToOneField(Post, verbose_name=("Номер соответствующего поста"), on_delete=models.CASCADE, null=True)
-    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='comments', null=True)
+    post = models.ForeignKey(
+        Post,
+        on_delete=models.CASCADE,
+        related_name='comment',
+        null=True
+    )
     author = models.ForeignKey(User, on_delete=models.CASCADE, null=True)
-
-    

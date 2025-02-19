@@ -2,6 +2,8 @@ from django.urls import path
 from django.views.generic import TemplateView
 
 
+handler403 = 'pages.views.csrf_failure_403'
+
 app_name = 'pages'
 
 urlpatterns = [
