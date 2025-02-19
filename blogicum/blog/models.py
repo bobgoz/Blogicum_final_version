@@ -110,9 +110,10 @@ class Location(PublishedModel, CreatedAtModel):
         return self.name
     
 class Comment(models.Model):
-    text = models.TextField('Текст', blank=False, null=True,)
+    text = models.TextField('Комментарий', null=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    post = models.ForeignKey(Post, on_delete=models.CASCADE)
-    author = models.ForeignKey(User, verbose_name="Автор комментария", on_delete=models.SET_NULL, null=True)
+    # post_id = models.OneToOneField(Post, verbose_name=("Номер соответствующего поста"), on_delete=models.CASCADE, null=True)
+    post = models.ForeignKey(Post, on_delete=models.CASCADE, related_name='comments', null=True)
+    author = models.ForeignKey(User, on_delete=models.CASCADE, null=True)
 
     

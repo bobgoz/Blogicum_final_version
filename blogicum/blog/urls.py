@@ -13,5 +13,8 @@ urlpatterns = [
     path('profile/<slug:username>/', views.profile, name='profile'),
     path('edit/', views.UserUpdateView.as_view(), name='edit_profile'),
     path('create_post/', views.CreatePostCreateView.as_view(), name='create_post'),
-    path('comments/<int:id_comment>/',views.add_comment, name='add_comment'),
+    path('comments/<int:pk>/',views.add_comment, name='add_comment'),
+    path('post/<int:post_id>/comments/<int:comment_id>/edit_comment/', views.edit_comment, name='edit_comment'),
+    path('post/<int:post_id>/comments/<int:comment_id>/delete_comment/', views.delete_comment, name='delete_comment'),
+    
 ]
