@@ -1,7 +1,7 @@
-from django.shortcuts import render, get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse_lazy
 from django.contrib.auth.views import PasswordChangeView
-from django.contrib.auth.mixins import UserPassesTestMixin, LoginRequiredMixin
+from django.contrib.auth.mixins import LoginRequiredMixin
 from django.views.generic import (
     CreateView,
     DetailView,
@@ -9,34 +9,26 @@ from django.views.generic import (
     UpdateView,
     DeleteView
 )
-from django.core.paginator import Paginator
 from django.contrib.auth.forms import UserCreationForm
-from django.contrib.auth.decorators import login_required
-from django.db.models import Count
-from django.http import Http404
-from django.utils.timezone import now
-
 from .models import Post, Category, Comment
-from .forms import PostForm, UserChangeForm, CommentForm
+from .forms import UserChangeForm, CommentForm
 from .models import User
+from blog.mixins import (
+    OnlyAuthorMixinForUser,
+    OnlyAuthorMixinForModels,
+    DeleteAndUpdateCommentsMixin,
+    GetSuccessUrlMixin,
+)
 
 PAGE_PAGINATION = 10
 
 
-class OnlyAuthorMixinForUser(UserPassesTestMixin):
-    """Тестер для проверки принадлежности объекта пользователя пользователю"""
+class RegistrationUser(CreateView):
+    """CBV для создания формы регистрации пользователя."""
 
-    def test_func(self):
-        object = self.get_object()
-        return object == self.request.user
-
-
-class OnlyAuthorMixinForModels(UserPassesTestMixin):
-    """Тестер для проверки принадлежности объекта модели пользователю"""
-
-    def test_func(self):
-        object = self.get_object()
-        return object.author == self.request.user
+    template_name = 'registration/registration_form.html'
+    form_class = UserCreationForm
+    success_url = reverse_lazy('login')
 
 
 class UserPasswordChangeView(
@@ -45,7 +37,7 @@ class UserPasswordChangeView(
     PasswordChangeView,
 ):
     """Переопределение дефолтной формы восстановления
-    паролядля получения объекта пользователя.
+    пароля для получения объекта пользователя.
     """
 
     def get_object(self):
@@ -55,39 +47,26 @@ class UserPasswordChangeView(
 class IndexListView(ListView):
     """CBV для отображения списка постов главной страницы"""
 
-    queryset = Post.posts_objects.annotate(comment_count=Count('comment'))
-    ordering = '-pub_date'
+    queryset = Post.objects_manager.posts_object_with_annotate()
     paginate_by = PAGE_PAGINATION
     template_name = 'blog/index.html'
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context['comment_count'] = self.queryset
-        return context
 
+class AddCommentCreateView(LoginRequiredMixin, GetSuccessUrlMixin, CreateView):
+    """CBV для добавления комментариев."""
 
-@login_required
-def add_comment(request, post_id):
-    """Функция для обработки POST запроса
-    для добавления комментариев.
-    """
-    post = get_object_or_404(Post, pk=post_id)
-    form = CommentForm(request.POST)
-    if form.is_valid():
-        new_comment = form.save(commit=False)
-        new_comment.author = request.user
-        new_comment.post = post
-        new_comment.save()
-    return redirect('blog:post_detail', post_id)
+    post_obj = None
+    model = Comment
+    form_class = CommentForm
 
+    def dispatch(self, request, *args, **kwargs):
+        self.post_object = get_object_or_404(Post, pk=kwargs['post_id'])
+        return super().dispatch(request, *args, **kwargs)
 
-def post_detail(request, post_id):
-    post = get_object_or_404(Post.posts_objects.all(), id=post_id)
-    context = {
-        'post': post,
-        'form': CommentForm(),
-    }
-    return render(request, 'blog/detail.html', context)
+    def form_valid(self, form):
+        form.instance.author = self.request.user
+        form.instance.post = self.post_object
+        return super().form_valid(form)
 
 
 class PostDetailView(DetailView):
@@ -99,30 +78,24 @@ class PostDetailView(DetailView):
     template_name = 'blog/detail.html'
 
     def get_object(self, queryset=None):
-        post = get_object_or_404(Post, pk=self.kwargs['post_id'])
+        post_id = self.kwargs['post_id']
+        post = get_object_or_404(
+            Post.objects.select_related('author'), pk=post_id)
         # Проверка, чтобы автору поста была доступна его публикация,
         # если категория не опубликована.
-        # P.S. были перебраны многие варианты,
-        # и именно этот работает (проходит тесты).
-        if not (
-            post.author == self.request.user
-            or (post.is_published
-                and post.category.is_published
-                and post.pub_date <= now())
-        ):
-            raise Http404('Страница не найдена')
-        else:
+        if self.request.user.username == post.author.username:
             return post
+        return get_object_or_404(Post.objects_manager.posts_objects(
+        ).select_related('author'), pk=post_id)
 
     def get_context_data(self, **kwargs):
         # Передаём дополнительные переменные в контекст.
         context = super().get_context_data(**kwargs)
         context['form'] = CommentForm()
         context['comments'] = (
-            self.object.comment.select_related('author',
-                                               'post',
-                                               )
+            Comment.objects.select_related('author')
         )
+        print(context)
         return context
 
 
@@ -136,19 +109,16 @@ class DeletePostDeleteView(
     model = Post
     pk_url_kwarg = 'post_id'
     success_url = reverse_lazy('blog:index')
-    template_name = 'blog/create.html'
 
 
 class EditPostUpdateView(
     OnlyAuthorMixinForModels,
     LoginRequiredMixin,
+    GetSuccessUrlMixin,
     UpdateView,
 ):
     """Класс для редактирования постов."""
 
-    model = Post
-    form_class = PostForm
-    template_name = 'blog/create.html'
     pk_url_kwarg = 'post_id'
 
     def dispatch(self, request, *args, **kwargs):
@@ -159,59 +129,58 @@ class EditPostUpdateView(
             return redirect('blog:post_detail', post_id=self.object.pk)
         return super().dispatch(request, *args, **kwargs)
 
-    def get_success_url(self):
-        # Перенаправляем пользователя
-        # после POST запроса.
-        return reverse_lazy(
-            'blog:post_detail',
-            kwargs={self.pk_url_kwarg: self.object.pk},
-        )
+
+class CategoryPostsListView(ListView):
+    """CBV для отображения категорий постов"""
+
+    category = None
+    queryset = None
+    paginate_by = PAGE_PAGINATION
+    template_name = 'blog/category.html'
+
+    def dispatch(self, request, *args, **kwargs):
+        self.category = get_object_or_404(Category,
+                                          slug=kwargs['category_slug'],
+                                          is_published=True,
+                                          )
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_queryset(self):
+        post_list = Post.objects_manager.posts_objects(
+        ).filter(category=self.category).order_by('-pub_date')
+        return post_list
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['category'] = self.category
+        return context
 
 
-def category_posts(request, category_slug):
-    """Функция для отображения категорий постов."""
-    category = get_object_or_404(
-        Category,
-        slug=category_slug,
-        is_published=True,
-    )
-    post_list = Post.posts_objects.order_by('-pub_date').filter(
-        category=category,
-    )
+class ProfileListView(ListView):
+    """CBV для отображения страницы профиля пользователя."""
 
-    paginator = Paginator(post_list, PAGE_PAGINATION)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
+    profile = None
+    queryset = None
+    template_name = 'blog/profile.html'
+    paginate_by = PAGE_PAGINATION
+    slug_url_kwarg = 'username'
 
-    context = {
-        'category': category,
-        'page_obj': page_obj,
-    }
-    return render(request, 'blog/category.html', context)
+    def dispatch(self, request, *args, **kwargs):
+        self.profile = get_object_or_404(User, username=kwargs['username'])
+        return super().dispatch(request, *args, **kwargs)
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['profile'] = self.profile
+        return context
 
-def profile(request, username):
-    """Функция для отображения пользователя"""
-    profile = get_object_or_404(User, username=username)
-    if request.user == profile:
-        posts = Post.objects.filter(
-            author=profile,
-        ).order_by('-pub_date').annotate(comment_count=Count('comment'))
-    else:
-        posts = Post.posts_objects.filter(
-            author=profile,
-        ).order_by('-pub_date').annotate(comment_count=Count('comment'))
-
-    paginator = Paginator(posts, PAGE_PAGINATION)
-    page_number = request.GET.get('page')
-    page_obj = paginator.get_page(page_number)
-
-    context = {
-        'profile': profile,
-        'page_obj': page_obj,
-        'comment_count': posts
-    }
-    return render(request, 'blog/profile.html', context)
+    def get_queryset(self):
+        if self.request.user == self.profile:
+            return Post.objects_manager.posts_with_annotate(
+            ).filter(author=self.profile)
+        else:
+            return Post.objects_manager.posts_object_with_annotate(
+            ).filter(author=self.profile)
 
 
 class UserUpdateView(OnlyAuthorMixinForUser, LoginRequiredMixin, UpdateView):
@@ -227,12 +196,8 @@ class UserUpdateView(OnlyAuthorMixinForUser, LoginRequiredMixin, UpdateView):
         return self.request.user
 
 
-class CreatePostCreateView(LoginRequiredMixin, CreateView):
+class CreatePostCreateView(LoginRequiredMixin, GetSuccessUrlMixin, CreateView):
     """CBV Для создания постов."""
-
-    model = Post
-    form_class = PostForm
-    template_name = 'blog/create.html'
 
     def form_valid(self, form):
         # Передаем объект пользователя в форму.
@@ -248,51 +213,25 @@ class CreatePostCreateView(LoginRequiredMixin, CreateView):
         )
 
 
-@login_required
-def edit_comment(request, post_id, comment_id):
-    """Функция для редактирования комментариев."""
-    comment = get_object_or_404(Comment, id=comment_id)
-    post = get_object_or_404(Post, id=post_id)
-    # Проверка для доступа к редактированию
-    # комментариев только авторам комментариев.
-    if request.user != comment.author:
-        return redirect('blog:post_detail', post_id)
-    form = CommentForm(request.POST or None, instance=comment)
-    context = {
-        'form': form,
-        'post_id': post,
-        'comment': comment,
-    }
-    if request.method == 'POST':
-        if form.is_valid():
-            form.save()
-            return redirect('blog:post_detail', post_id)
-    else:
-        return render(request, 'blog/comment.html', context)
+class EditCommentUpdateView(
+    LoginRequiredMixin,
+    DeleteAndUpdateCommentsMixin,
+    GetSuccessUrlMixin,
+    UpdateView,
+):
+    """CBV для редактирования комментариев."""
+
+    comment = None
+    post_obj = None
+    form_class = CommentForm
 
 
-@login_required
-def delete_comment(request, post_id, comment_id):
-    """Функция для удаления комментариев."""
-    comment = get_object_or_404(Comment, id=comment_id)
-    post = get_object_or_404(Post, id=post_id)
-    # Проверка для доступа к удалению комментариев
-    # только авторам комментариев.
-    if request.user != comment.author:
-        return redirect('blog:post_detail', post_id)
-    context = {
-        'post': post,
-    }
-    if request.method == 'POST':
-        comment.delete()
-        return redirect('blog:post_detail', post_id)
-    else:
-        return render(request, 'blog/comment.html', context)
+class DeleteCommentDeleteView(
+    LoginRequiredMixin,
+    DeleteAndUpdateCommentsMixin,
+    GetSuccessUrlMixin,
+    DeleteView,
+):
+    """CBV для удаления коменнтариев."""
 
-
-class RegistrationUser(CreateView):
-    """CBV для создания формы регистрации пользователя."""
-
-    template_name = 'registration/registration_form.html'
-    form_class = UserCreationForm
-    success_url = reverse_lazy('login')
+    model = Comment
