@@ -10,9 +10,9 @@ from django.views.generic import (
     DeleteView
 )
 from django.contrib.auth.forms import UserCreationForm
-from .models import Post, Category, Comment
+
+from .models import Post, Category, Comment, User
 from .forms import UserChangeForm, CommentForm
-from .models import User
 from blog.mixins import (
     OnlyAuthorMixinForUser,
     OnlyAuthorMixinForModels,
