@@ -43,7 +43,7 @@ class DeleteAndUpdateCommentsMixin():
 
 class GetSuccessUrlMixin():
     """Миксин с функцией get_success_url для
-    перенаправления пользователяпосле POST запроса
+    перенаправления пользователя после POST запроса
     """
 
     model = Post

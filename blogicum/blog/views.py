@@ -95,7 +95,6 @@ class PostDetailView(DetailView):
         context['comments'] = (
             Comment.objects.select_related('author')
         )
-        print(context)
         return context
 
 
